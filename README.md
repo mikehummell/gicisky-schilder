@@ -1,1 +1,0 @@
-"# gicisky-schilder" 
