@@ -30,35 +30,66 @@ CHAR_DATA    = "0000fef2-0000-1000-8000-00805f9b34fb"
     
 #     draw.text((x, y), text, fill="black", font=font)
 #     return img
-def erstelle_bild(text: str, subtext: str = "", logo_pfad: str = "") -> Image.Image:
-    """Erstellt ein 250x132 Bild mit Logo links und Text rechts"""
+def erstelle_masken(text: str, subtext: str = "", logo_pfad: str = "", farbe: str = "BW") -> tuple:
+    bild = erstelle_bild(text, subtext, logo_pfad, farbe)
+    
+    # Rotmaske: Logo-Bereich weiss, Rest schwarz
+    rot_maske = Image.new("RGB", (250, 132), color="black")
+    
+    if logo_pfad:
+        try:
+            logo_raw = Image.open(logo_pfad)
+            if logo_raw.mode in ("RGBA", "P", "LA"):
+                hintergrund = Image.new("L", logo_raw.size, 0)  # schwarz
+                if logo_raw.mode == "P":
+                    logo_raw = logo_raw.convert("RGBA")
+                # Alpha als Maske: Logo-Pixel werden weiss
+                alpha = logo_raw.split()[-1]
+                weiss = Image.new("L", logo_raw.size, 255)
+                hintergrund.paste(weiss, mask=alpha)
+                logo_rot = hintergrund.convert("RGB")
+            else:
+                # Kein Alpha: Logo komplett weiss (= rot)
+                logo_rot = Image.new("RGB", logo_raw.size, "white")
+            
+            logo_rot.thumbnail((90, 90))
+            logo_y = (132 - logo_rot.height) // 2
+            rot_maske.paste(logo_rot, (5, logo_y))
+        except Exception as e:
+            print(f"  ⚠ Rotmaske für Logo fehlgeschlagen: {e}")
+    rot_maske.save("debug_rotmaske.png")
+    bild.save("debug_bild.png")
+    return bild, rot_maske
+
+def erstelle_bild(text: str, subtext: str = "", logo_pfad: str = "", farbe: str = "BW") -> Image.Image:
     img = Image.new("RGB", (250, 132), color="white")
     draw = ImageDraw.Draw(img)
 
-    # --- Logo ---
     logo_breite = 0
     if logo_pfad:
         try:
-            #logo = Image.open(logo_pfad).convert("RGB")
-            # Neu:
             logo_raw = Image.open(logo_pfad)
-            # Falls Transparenz vorhanden (RGBA oder P), auf weissem Hintergrund zusammenführen
             if logo_raw.mode in ("RGBA", "P", "LA"):
                 hintergrund = Image.new("RGB", logo_raw.size, "white")
                 if logo_raw.mode == "P":
                     logo_raw = logo_raw.convert("RGBA")
-                hintergrund.paste(logo_raw, mask=logo_raw.split()[-1])  # Alpha als Maske
-                logo = hintergrund
+                if farbe == "BWR":
+                    # BWR: Logo-Bereich bleibt weiss im Hauptbild
+                    # (Logo wird nur im Rotkanal angezeigt)
+                    logo = hintergrund  # komplett weiss
+                else:
+                    hintergrund.paste(logo_raw, mask=logo_raw.split()[-1])
+                    logo = hintergrund
             else:
                 logo = logo_raw.convert("RGB")
-            # Logo auf max 90x90 skalieren, Seitenverhältnis beibehalten
+
             logo.thumbnail((90, 90))
-            # Logo vertikal zentrieren
             logo_y = (132 - logo.height) // 2
             img.paste(logo, (5, logo_y))
-            logo_breite = logo.width + 10  # 5px Abstand links + Logo + 5px Abstand rechts
+            logo_breite = logo.width + 10
         except Exception as e:
             print(f"  ⚠ Logo konnte nicht geladen werden: {e}")
+    # ... Rest bleibt gleich
 
     # --- Text ---
     text_x = logo_breite + 5
@@ -113,18 +144,16 @@ def parse_adresse(adresse: str) -> str:
         return f"FF:FF:{teile[0]}:{teile[1]}:{teile[2]}:{teile[3]}"
     return adresse  # bereits im richtigen Format
 
-async def sende_bild(adresse: str, bild: Image.Image):
-    """Sendet ein Bild an ein Schild via BLE"""
+async def sende_bild(adresse: str, bild: Image.Image, rot_maske: Image.Image = None, farbe: str = "BW"):
     from bitmap import Bitmap
     import tempfile, os
 
-    # Bild temporär speichern (Bitmap-Klasse braucht eine Datei)
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     bild.save(tmp.name)
     tmp.close()
 
     try:
-        bmp = Bitmap(tmp.name)
+        bmp = Bitmap(tmp.name, red_mask=rot_maske, farbe=farbe)
         data = bmp.bitmap
 
         notification_queue = asyncio.Queue(maxsize=1)
@@ -172,7 +201,6 @@ async def sende_bild(adresse: str, bild: Image.Image):
 
 
 async def main():
-    # CSV einlesen
     schilder = []
     with open("schilder.csv", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -183,22 +211,36 @@ async def main():
     print("Drücke jetzt ALLE Knöpfe und warte 3 Sekunden...")
     await asyncio.sleep(3)
 
-    # Alle Schilder gleichzeitig beschriften
     tasks = []
     for schild in schilder:
         adresse = parse_adresse(schild["adresse"])
         text    = schild["text"]
         print(f"Starte: {adresse} → '{text}'")
-        # bild = erstelle_bild(text)
 
-        bild = erstelle_bild(
+        farbe = schild.get("farbe", "BW")
+        bild, rot_maske = erstelle_masken(
             text      = schild["text"],
             subtext   = schild.get("subtext", ""),
-            logo_pfad = LOGO_PFAD
+            logo_pfad = LOGO_PFAD,
+            farbe     = farbe
         )
-        tasks.append(sende_bild(adresse, bild))
+        farbe = schild.get("farbe", "BW")
+        tasks.append(sende_bild(adresse, bild, rot_maske, farbe))
 
     await asyncio.gather(*tasks)
     print("\n✓ Alle Schilder fertig!")
+
+# async def main():
+#     print("Drücke Knopf und warte 3 Sekunden...")
+#     await asyncio.sleep(3)
+
+#     # Einfachster Test: alles rot
+#     bild     = Image.new("RGB", (250, 132), color="white")
+#     rot_maske = Image.new("RGB", (250, 132), color="white")
+#     farbe_bwr = "BWR"
+
+#     adresse = parse_adresse("92.10.84.97")  # ← deine BWR-Adresse hier
+#     await sende_bild(adresse, bild, rot_maske, farbe_bwr)
+#     print("\n✓ Fertig!")
 
 asyncio.run(main())
