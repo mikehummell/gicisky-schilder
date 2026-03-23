@@ -65,8 +65,8 @@ def erstelle_bild(text: str, subtext: str = "", logo_pfad: str = "") -> Image.Im
     text_bereich_breite = 250 - text_x - 5
 
     try:
-        font_gross = ImageFont.truetype("C:\\Windows\\Fonts\\arial.ttf", 48)
-        font_klein = ImageFont.truetype("C:\\Windows\\Fonts\\arial.ttf", 22)
+        font_gross = ImageFont.truetype("C:\\Windows\\Fonts\\gigi.ttf", 48)
+        font_klein = ImageFont.truetype("C:\\Windows\\Fonts\\arial.ttf", 20)
     except:
         font_gross = ImageFont.load_default()
         font_klein = ImageFont.load_default()
@@ -188,13 +188,15 @@ async def main():
     for schild in schilder:
         adresse = parse_adresse(schild["adresse"])
         text    = schild["text"]
+        #logo_pfad = schild["image"]
         print(f"Starte: {adresse} → '{text}'")
         # bild = erstelle_bild(text)
 
         bild = erstelle_bild(
             text      = schild["text"],
             subtext   = schild.get("subtext", ""),
-            logo_pfad = LOGO_PFAD
+            #logo_pfad = LOGO_PFAD
+            logo_pfad = schild["image"]
         )
         tasks.append(sende_bild(adresse, bild))
 
